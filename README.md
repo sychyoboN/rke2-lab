@@ -1,4 +1,4 @@
-# Hyper-V Lab — Rocky Linux 10 DevTools + RKE2/Rancher
+# Hyper-V Lab — Rocky Linux 10 DevTools + RKE2/Rancher/ArgoCD
 
 Automated build of two Rocky Linux 10 VMs on Hyper-V using **PowerShell** (VM provisioning) + **Ansible** (configuration management).
 
@@ -15,7 +15,7 @@ Automated build of two Rocky Linux 10 VMs on Hyper-V using **PowerShell** (VM pr
 │  │  • Docker Compose        │   │    plane + worker         │   │
 │  │  • Helm                  │   │  • Rancher Manager 2.9    │   │
 │  │  • kubectl               │   │  • cert-manager           │   │
-│  │  • Docker Registry :5000 │   │                           │   │
+│  │  • Docker Registry :5000 │   │  • ArgoCD                 │   │
 │  └──────────┬──────────────┘   └──────────────┬────────────┘   │
 │             └──────────────────────────────────┘               │
 │                      LabSwitch (192.168.100.0/24)               │
@@ -48,7 +48,8 @@ Automated build of two Rocky Linux 10 VMs on Hyper-V using **PowerShell** (VM pr
     ├── devtools/               # Git, Docker, Helm, kubectl
     ├── registry/               # Private Docker registry (port 5000)
     ├── rke2/                   # RKE2 server install + kubeconfig
-    └── rancher/                # cert-manager + Rancher Manager
+    ├── rancher/                # cert-manager + Rancher Manager
+    └── argocd/                 # ArgoCD GitOps engine
 ```
 
 ## Step-by-Step Deployment
@@ -66,7 +67,7 @@ This creates:
 - `lab-devtools` — 4 vCPU / 8 GB RAM / 80 GB VHDX
 - `lab-k8s` — 4 vCPU / 32 GB RAM / 120 GB VHDX
 - Both VMs boot the Rocky Linux 10 minimal ISO
-- Windows hosts file entries for `lab-devtools` and `lab-k8s` / `rancher.lab.local` are added automatically
+- Windows hosts file entries for `lab-devtools`, `lab-k8s`, `rancher.lab.local`, and `argocd.lab.local` are added automatically
 
 ### Step 2 — Install Rocky Linux 10 on each VM
 
@@ -114,14 +115,32 @@ ansible all -m ping
 ansible-playbook site.yml
 ```
 
-Total runtime: approximately **15–25 minutes** (mostly RKE2 + Rancher startup).
+Total runtime: approximately **20–30 minutes** (mostly RKE2 + Rancher + ArgoCD startup).
 
 ### Step 5 — Access Rancher
 
-> The hosts file entries (`lab-devtools`, `lab-k8s`, `rancher.lab.local`) were added automatically by `New-LabVMs.ps1` in Step 1.
+> The hosts file entries (`lab-devtools`, `lab-k8s`, `rancher.lab.local`, `argocd.lab.local`) were added automatically by `New-LabVMs.ps1` in Step 1.
 
 Open: **https://rancher.lab.local**
 Bootstrap password: `Admin1234!` (change in `group_vars/all.yml` before deploying!)
+
+### Step 6 — Access ArgoCD
+
+Open: **http://argocd.lab.local**
+
+| Field | Value |
+|---|---|
+| Username | `admin` |
+| Password | Printed at the end of the Ansible run — or retrieve manually: |
+
+```bash
+# Retrieve the initial admin password from the cluster
+kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml \
+  get secret argocd-initial-admin-secret -n argocd \
+  -o jsonpath='{.data.password}' | base64 -d
+```
+
+> Change the password after first login via **User Info → Update Password**, then delete the `argocd-initial-admin-secret` secret.
 
 ## Using the Private Registry
 
@@ -148,10 +167,16 @@ On the k8s node, Kubernetes is pre-configured to mirror pulls through the regist
 
 ```bash
 # Only configure devtools
-ansible-playbook site.yml --limit devtools
+ansible-playbook site.yml --tags devtools,registry
 
-# Only deploy RKE2 (skip Rancher)
-ansible-playbook site.yml --limit k8s_nodes --skip-tags rancher
+# Only deploy RKE2 (skip Rancher + ArgoCD)
+ansible-playbook site.yml --tags rke2
+
+# Re-run just Rancher
+ansible-playbook site.yml --tags rancher
+
+# Re-run just ArgoCD
+ansible-playbook site.yml --tags argocd
 
 # Re-run just the registry setup
 ansible-playbook site.yml --tags registry
@@ -170,6 +195,8 @@ All versions and IPs are in `group_vars/all.yml`:
 | `kubectl_version` | v1.30.4 | kubectl version |
 | `rancher_hostname` | rancher.lab.local | Rancher ingress hostname |
 | `rancher_bootstrap_password` | Admin1234! | **Change this!** |
+| `argocd_chart_version` | 7.7.3 | ArgoCD Helm chart version |
+| `argocd_hostname` | argocd.lab.local | ArgoCD ingress hostname |
 | `private_registry_port` | 5000 | Registry listen port |
 
 ## Troubleshooting
@@ -184,6 +211,13 @@ sudo /var/lib/rancher/rke2/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml 
 ```bash
 kubectl get pods -n cattle-system
 kubectl describe pod -n cattle-system <pod-name>
+```
+
+**ArgoCD not reachable:**
+```bash
+kubectl get pods -n argocd
+kubectl get ingress -n argocd
+kubectl describe pod -n argocd -l app.kubernetes.io/name=argocd-server
 ```
 
 **Registry unreachable:**

@@ -288,7 +288,7 @@ Write-Step "Updating Windows hosts file"
 $hostsFile  = "$env:SystemRoot\System32\drivers\etc\hosts"
 $labEntries = @(
     "$DevtoolsIP`tlab-devtools"
-    "$K8sIP`tlab-k8s`trancher.lab.local"
+    "$K8sIP`tlab-k8s`trancher.lab.local`targocd.lab.local"
 )
 
 $hostsContent = [System.IO.File]::ReadAllText($hostsFile)

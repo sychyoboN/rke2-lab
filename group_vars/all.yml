@@ -20,5 +20,9 @@ helm_version: "v3.16.1"
 rancher_hostname: "rancher.lab.local"
 rancher_bootstrap_password: "Admin1234!"   # Change this!
 
+# ArgoCD
+argocd_chart_version: "7.7.3"
+argocd_hostname: "argocd.lab.local"
+
 # Tools versions
 kubectl_version: "v1.30.4"

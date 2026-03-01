@@ -1,0 +1,118 @@
+---
+# ArgoCD role: Deploy ArgoCD GitOps engine via Helm
+
+- name: Set KUBECONFIG fact
+  ansible.builtin.set_fact:
+    kubeconfig: /etc/rancher/rke2/rke2.yaml
+    kubectl: /var/lib/rancher/rke2/bin/kubectl
+    helm: /usr/local/bin/helm
+
+# ── Helm repo ─────────────────────────────────────────────────────────────────
+- name: Add ArgoCD Helm repo
+  ansible.builtin.command: >
+    {{ helm }} repo add argo https://argoproj.github.io/argo-helm
+  environment:
+    KUBECONFIG: "{{ kubeconfig }}"
+  changed_when: false
+
+- name: Update Helm repos
+  ansible.builtin.command: "{{ helm }} repo update"
+  environment:
+    KUBECONFIG: "{{ kubeconfig }}"
+  changed_when: false
+
+# ── Namespace ─────────────────────────────────────────────────────────────────
+- name: Create argocd namespace
+  ansible.builtin.command: >
+    {{ kubectl }} --kubeconfig {{ kubeconfig }}
+    create namespace argocd
+  register: argocd_ns
+  changed_when: argocd_ns.rc == 0
+  failed_when: argocd_ns.rc != 0 and 'already exists' not in argocd_ns.stderr
+
+# ── Install ArgoCD ────────────────────────────────────────────────────────────
+# server.insecure=true: disables ArgoCD's own TLS so nginx ingress can terminate it.
+- name: Install ArgoCD via Helm
+  ansible.builtin.command: >
+    {{ helm }} upgrade --install argocd argo/argo-cd
+    --namespace argocd
+    --version {{ argocd_chart_version }}
+    --set configs.params."server\.insecure"=true
+    --kubeconfig {{ kubeconfig }}
+    --wait
+    --timeout 10m
+  changed_when: true
+
+- name: Wait for ArgoCD server to be ready
+  ansible.builtin.command: >
+    {{ kubectl }} --kubeconfig {{ kubeconfig }}
+    rollout status deployment/argocd-server -n argocd --timeout=300s
+  changed_when: false
+
+# ── Ingress ───────────────────────────────────────────────────────────────────
+- name: Write ArgoCD Ingress manifest
+  ansible.builtin.copy:
+    dest: /tmp/argocd-ingress.yaml
+    mode: '0644'
+    content: |
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: argocd-server
+        namespace: argocd
+        annotations:
+          nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+      spec:
+        ingressClassName: nginx
+        rules:
+          - host: {{ argocd_hostname }}
+            http:
+              paths:
+                - path: /
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: argocd-server
+                      port:
+                        number: 80
+
+- name: Apply ArgoCD Ingress
+  ansible.builtin.command: >
+    {{ kubectl }} --kubeconfig {{ kubeconfig }}
+    apply -f /tmp/argocd-ingress.yaml
+  changed_when: true
+
+# ── Retrieve initial admin password ───────────────────────────────────────────
+- name: Get ArgoCD initial admin password
+  ansible.builtin.command: >
+    {{ kubectl }} --kubeconfig {{ kubeconfig }}
+    get secret argocd-initial-admin-secret
+    -n argocd
+    -o jsonpath='{.data.password}'
+  register: argocd_password_b64
+  changed_when: false
+
+- name: Decode ArgoCD admin password
+  ansible.builtin.command: >
+    bash -c "echo '{{ argocd_password_b64.stdout }}' | base64 -d"
+  register: argocd_password
+  changed_when: false
+  no_log: true
+
+# ── Summary ───────────────────────────────────────────────────────────────────
+- name: Display ArgoCD access information
+  ansible.builtin.debug:
+    msg:
+      - "================================================================"
+      - "  ArgoCD is READY!"
+      - "================================================================"
+      - "  URL:      http://{{ argocd_hostname }}"
+      - "  Username: admin"
+      - "  Password: {{ argocd_password.stdout }}"
+      - ""
+      - "  Add to /etc/hosts (on your workstation):"
+      - "    {{ ansible_host }}  {{ argocd_hostname }}"
+      - ""
+      - "  CLI login:"
+      - "    argocd login {{ argocd_hostname }} --username admin --insecure"
+      - "================================================================"
