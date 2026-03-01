@@ -17,7 +17,7 @@
 [CmdletBinding()]
 param(
     [string]$ISOPath        = "C:\ISOs\Rocky-10.1-x86_64-minimal.iso",
-    [string]$VMStoragePath  = "A:\VMs",
+    [string]$VMStoragePath  = "", # User decides where they want to store VM HDs
     [string]$SwitchName     = "LabSwitch",
     [string]$NATNetwork     = "192.168.100.0/24",
     [string]$GatewayIP      = "192.168.100.1",
@@ -34,6 +34,15 @@ if (-not $AnsiblePassword) {
     $AnsiblePassword = Read-Host "Ansible user password" -AsSecureString
 }
 $ansiblePwPlain = [System.Net.NetworkCredential]::new('', $AnsiblePassword).Password
+
+if (-not $VMStoragePath) {
+    Write-Host "`nAvailable drives:" -ForegroundColor Cyan
+    Get-PSDrive -PSProvider FileSystem | Where-Object { $null -ne $_.Used } |
+        Sort-Object Root |
+        ForEach-Object { Write-Host ("  {0,-6} {1,8:N1} GB free" -f $_.Root, ($_.Free / 1GB)) }
+    $VMStoragePath = Read-Host "`nVM storage path (press Enter for C:\VMs)"
+    if (-not $VMStoragePath) { $VMStoragePath = "C:\VMs" }
+}
 
 if ($NATNetwork -notmatch '^\d{1,3}(\.\d{1,3}){3}/\d{1,2}$') {
     throw "NATNetwork must be CIDR like 192.168.100.0/24 (got '$NATNetwork')"

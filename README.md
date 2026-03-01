@@ -58,12 +58,13 @@ Automated build of two Rocky Linux 10 VMs on Hyper-V using **PowerShell** (VM pr
 ```powershell
 # Adjust ISOPath if your ISO is elsewhere
 .\powershell\New-LabVMs.ps1 -ISOPath "C:\ISOs\Rocky-10.1-x86_64-minimal.iso"
+# Ansible user password: Admin1234!
 ```
 
 This creates:
 - Hyper-V internal switch `LabSwitch` with NAT (192.168.100.0/24)
 - `lab-devtools` — 4 vCPU / 8 GB RAM / 80 GB VHDX
-- `lab-k8s` — 4 vCPU / 16 GB RAM / 120 GB VHDX
+- `lab-k8s` — 4 vCPU / 32 GB RAM / 120 GB VHDX
 - Both VMs boot the Rocky Linux 10 minimal ISO
 - Windows hosts file entries for `lab-devtools` and `lab-k8s` / `rancher.lab.local` are added automatically
 
@@ -97,14 +98,14 @@ This generates `~/.ssh/lab_rsa` and installs the public key on both VMs.
 
 ```bash
 # Copy SSH key into WSL
-cp /mnt/c/Users/jorda/.ssh/lab_rsa ~/.ssh/lab_rsa
+cp "/mnt/c/Users/<user profile>/.ssh/lab_rsa" ~/.ssh/lab_rsa
 chmod 600 ~/.ssh/lab_rsa
 
 # Install Ansible if needed
 pip install ansible
 
 # Install required Ansible Galaxy collections
-ansible-galaxy collection install -r requirements.yml --force
+ansible-galaxy collection install -r requirements.yml
 
 # Test connectivity
 ansible all -m ping

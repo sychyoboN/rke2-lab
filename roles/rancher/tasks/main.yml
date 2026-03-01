@@ -53,6 +53,17 @@
     --wait
   changed_when: true
 
+# Wait for the nginx ingress controller pod to be ready before installing Rancher.
+# Rancher's Helm chart creates an Ingress which triggers the nginx admission webhook
+# (validate.nginx.ingress.kubernetes.io) — if the pod isn't up yet, the webhook
+# call fails with "no endpoints available".
+- name: Wait for rke2 ingress-nginx controller to be ready
+  ansible.builtin.command: >
+    {{ kubectl }} --kubeconfig {{ kubeconfig }}
+    rollout status daemonset/rke2-ingress-nginx-controller
+    -n kube-system --timeout=300s
+  changed_when: false
+
 - name: Wait for cert-manager to be ready
   ansible.builtin.command: >
     {{ kubectl }} --kubeconfig {{ kubeconfig }}

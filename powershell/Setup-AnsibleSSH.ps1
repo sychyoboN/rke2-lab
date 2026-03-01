@@ -43,11 +43,15 @@ $pubKey = Get-Content "$KeyPath.pub"
 # ── Copy public key to each VM ────────────────────────────────────────────────
 foreach ($ip in $VMIPs) {
     Write-Step "Copying public key to $AnsibleUser@$ip"
+
+    # Remove stale known_hosts entries so re-runs work after VM rebuilds
+    try { & ssh-keygen -R $ip 2>&1 | Out-Null } catch { <# not in known_hosts - fine #> }
+
     Write-Host "    You will be prompted for the ansible user password." -ForegroundColor Yellow
 
-    # Create .ssh dir and append key
-    $cmd = "mkdir -p ~/.ssh && chmod 700 ~/.ssh && echo '$pubKey' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
-    & ssh -o StrictHostKeyChecking=no "$AnsibleUser@$ip" $cmd
+    # Create .ssh dir and append key (idempotent: skip if key already present)
+    $cmd = "mkdir -p ~/.ssh && chmod 700 ~/.ssh && grep -qxF '$pubKey' ~/.ssh/authorized_keys 2>/dev/null || echo '$pubKey' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+    & ssh -o StrictHostKeyChecking=accept-new "$AnsibleUser@$ip" $cmd
 
     if ($LASTEXITCODE -eq 0) {
         Write-Done "Public key installed on $ip"
@@ -59,7 +63,7 @@ foreach ($ip in $VMIPs) {
 # ── Test connectivity ─────────────────────────────────────────────────────────
 Write-Step "Testing SSH connectivity (key auth)"
 foreach ($ip in $VMIPs) {
-    $result = & ssh -i $KeyPath -o StrictHostKeyChecking=no -o BatchMode=yes "$AnsibleUser@$ip" "hostname" 2>&1
+    $result = & ssh -i $KeyPath -o StrictHostKeyChecking=accept-new -o BatchMode=yes "$AnsibleUser@$ip" "hostname" 2>&1
     if ($LASTEXITCODE -eq 0) {
         Write-Done "$ip -> $result"
     } else {
@@ -69,12 +73,20 @@ foreach ($ip in $VMIPs) {
 
 Write-Step "Done! Run Ansible from WSL or a Linux machine:"
 Write-Host ""
-Write-Host "  # From WSL, convert the key path:"
+Write-Host "  # From WSL, copy the key and fix permissions:"
 Write-Host "  cp /mnt/c/Users/$env:USERNAME/.ssh/lab_rsa ~/.ssh/lab_rsa"
 Write-Host "  chmod 600 ~/.ssh/lab_rsa"
 Write-Host ""
+Write-Host "  # WSL mounts Windows drives world-writable (777) so Ansible ignores"
+Write-Host "  # ansible.cfg there. Point ANSIBLE_CONFIG at the file explicitly:"
+Write-Host "  export ANSIBLE_CONFIG=/mnt/c/Users/$env:USERNAME/OneDrive/Documents/01_VS_CODE/rke2-lab/ansible.cfg"
+Write-Host ""
 Write-Host "  # Then run the playbook:"
-Write-Host "  cd hyper-v-lab/ansible"
+Write-Host "  cd /mnt/c/Users/$env:USERNAME/OneDrive/Documents/01_VS_CODE/rke2-lab"
 Write-Host "  ansible-galaxy install -r requirements.yml"
 Write-Host "  ansible-playbook site.yml"
+Write-Host ""
+Write-Host "  # Permanent fix: add to /etc/wsl.conf then run 'wsl --shutdown':"
+Write-Host "  #   [automount]"
+Write-Host "  #   options = metadata,umask=022,fmask=011"
 Write-Host ""
