@@ -1,0 +1,213 @@
+---
+# RKE2 role: Install and configure RKE2 as a single-node control plane
+# Also installs Helm and kubectl on this node for Rancher deployment
+
+# ── Pre-flight ────────────────────────────────────────────────────────────────
+# iptables-services (from common role) sets a DROP default on FORWARD, which
+# blocks pod → host NAT and breaks cluster DNS/internet access.
+# These rules explicitly allow RKE2's pod and service CIDRs to be forwarded.
+- name: Allow iptables FORWARD for established/related connections
+  ansible.builtin.iptables:
+    chain: FORWARD
+    ctstate: ESTABLISHED,RELATED
+    jump: ACCEPT
+    action: insert
+    rule_num: 1
+    comment: "Allow established/related forward"
+
+- name: Allow iptables FORWARD from RKE2 pod and service CIDRs (egress)
+  ansible.builtin.iptables:
+    chain: FORWARD
+    source: "{{ item }}"
+    jump: ACCEPT
+    comment: "RKE2 pod/service network forward egress"
+  loop:
+    - 10.42.0.0/16   # pod CIDR (Canal/Flannel default)
+    - 10.43.0.0/16   # service CIDR (RKE2 default)
+
+- name: Allow iptables FORWARD to RKE2 pod and service CIDRs (ingress via hostPort DNAT)
+  ansible.builtin.iptables:
+    chain: FORWARD
+    destination: "{{ item }}"
+    jump: ACCEPT
+    comment: "RKE2 pod/service network forward ingress"
+  loop:
+    - 10.42.0.0/16   # pod CIDR
+    - 10.43.0.0/16   # service CIDR
+
+- name: Allow iptables INPUT for nginx ingress (HTTP + HTTPS)
+  ansible.builtin.iptables:
+    chain: INPUT
+    protocol: tcp
+    destination_port: "{{ item }}"
+    ctstate: NEW
+    jump: ACCEPT
+    comment: "RKE2 nginx ingress"
+  loop:
+    - "80"
+    - "443"
+
+- name: Save iptables rules
+  ansible.builtin.command: service iptables save
+  changed_when: true
+
+- name: Disable nm-cloud-setup (causes networking issues with RKE2)
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+  loop:
+    - nm-cloud-setup.service
+    - nm-cloud-setup.timer
+  ignore_errors: true
+
+- name: Create RKE2 config directory
+  ansible.builtin.file:
+    path: /etc/rancher/rke2
+    state: directory
+    mode: '0755'
+    recurse: true
+
+# ── RKE2 Configuration ────────────────────────────────────────────────────────
+- name: Create RKE2 server config
+  ansible.builtin.copy:
+    dest: /etc/rancher/rke2/config.yaml
+    mode: '0600'
+    content: |
+      # RKE2 single-node server configuration
+      write-kubeconfig-mode: "0644"
+      tls-san:
+        - "lab-k8s"
+        - "lab-k8s.lab.local"
+        - "192.168.100.20"
+        - "rancher.lab.local"
+      # Mirror all image pulls through private registry
+      # (Images not in registry will fall back to public)
+      # cluster-cidr: 10.42.0.0/16   # default
+      # service-cidr: 10.43.0.0/16   # default
+      node-label:
+        - "role=master"
+        - "node-type=single"
+
+- name: Create private registry mirror config for RKE2 containerd
+  ansible.builtin.copy:
+    dest: /etc/rancher/rke2/registries.yaml
+    mode: '0644'
+    content: |
+      mirrors:
+        "{{ registry_mirror_url | regex_replace('http://', '') }}":
+          endpoint:
+            - "http://{{ registry_mirror_url | regex_replace('http://', '') }}"
+      configs:
+        "{{ registry_mirror_url | regex_replace('http://', '') }}":
+          tls:
+            insecure_skip_verify: true
+
+# ── Install RKE2 ──────────────────────────────────────────────────────────────
+- name: Download RKE2 install script
+  ansible.builtin.get_url:
+    url: https://get.rke2.io
+    dest: /tmp/install-rke2.sh
+    mode: '0755'
+
+- name: Install RKE2 server
+  ansible.builtin.command: /tmp/install-rke2.sh
+  environment:
+    INSTALL_RKE2_VERSION: "{{ rke2_version }}"
+    INSTALL_RKE2_TYPE: "server"
+    INSTALL_RKE2_METHOD: "tar"   # Bypass RPM repo (no centos/10 repo exists yet)
+  args:
+    creates: /usr/local/bin/rke2
+
+- name: Enable and start rke2-server
+  ansible.builtin.systemd:
+    name: rke2-server
+    state: started
+    enabled: true
+
+- name: Wait for RKE2 to be ready (up to 5 min)
+  ansible.builtin.wait_for:
+    path: /var/lib/rancher/rke2/server/node-token
+    state: present
+    timeout: 300
+
+- name: Wait for kubeconfig to be created
+  ansible.builtin.wait_for:
+    path: /etc/rancher/rke2/rke2.yaml
+    state: present
+    timeout: 120
+
+# ── kubectl + Helm on k8s node ────────────────────────────────────────────────
+- name: Symlink rke2 kubectl to /usr/local/bin
+  ansible.builtin.file:
+    src: /var/lib/rancher/rke2/bin/kubectl
+    dest: /usr/local/bin/kubectl
+    state: link
+    force: true
+
+- name: Create .kube dir for ansible user
+  ansible.builtin.file:
+    path: "/home/{{ ansible_user }}/.kube"
+    state: directory
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: '0700'
+
+- name: Copy kubeconfig for ansible user
+  ansible.builtin.copy:
+    src: /etc/rancher/rke2/rke2.yaml
+    dest: "/home/{{ ansible_user }}/.kube/config"
+    remote_src: true
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: '0600'
+
+- name: Set KUBECONFIG in profile
+  ansible.builtin.lineinfile:
+    path: "/home/{{ ansible_user }}/.bashrc"
+    line: 'export KUBECONFIG=/home/{{ ansible_user }}/.kube/config'
+    state: present
+
+- name: Add RKE2 bin to PATH for all users
+  ansible.builtin.copy:
+    dest: /etc/profile.d/rke2.sh
+    content: |
+      export PATH=$PATH:/var/lib/rancher/rke2/bin
+    mode: '0644'
+
+# ── Install Helm on k8s node ──────────────────────────────────────────────────
+- name: Download Helm install script
+  ansible.builtin.get_url:
+    url: https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+    dest: /tmp/get-helm.sh
+    mode: '0755'
+
+- name: Install Helm
+  ansible.builtin.command: /tmp/get-helm.sh
+  environment:
+    DESIRED_VERSION: "{{ helm_version }}"
+    PATH: "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+  args:
+    creates: /usr/local/bin/helm
+
+# ── Verify cluster ────────────────────────────────────────────────────────────
+- name: Wait for all nodes to be Ready
+  ansible.builtin.command: >
+    /var/lib/rancher/rke2/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml
+    get nodes -o jsonpath='{.items[*].status.conditions[-1].type}'
+  register: node_status
+  until: "'Ready' in node_status.stdout"
+  retries: 30
+  delay: 10
+  changed_when: false
+
+- name: Display cluster node status
+  ansible.builtin.command: >
+    /var/lib/rancher/rke2/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml
+    get nodes -o wide
+  register: node_list
+  changed_when: false
+
+- name: Show cluster nodes
+  ansible.builtin.debug:
+    msg: "{{ node_list.stdout_lines }}"

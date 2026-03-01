@@ -1,0 +1,133 @@
+---
+# DevTools role: Git, Docker CE, Docker Compose, Helm, kubectl
+
+# ── Docker CE ────────────────────────────────────────────────────────────────
+- name: Add Docker CE repository
+  ansible.builtin.get_url:
+    url: https://download.docker.com/linux/rhel/docker-ce.repo
+    dest: /etc/yum.repos.d/docker-ce.repo
+    mode: '0644'
+
+- name: Install Docker CE and dependencies
+  ansible.builtin.dnf:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-compose-plugin
+    state: present
+
+- name: Create Docker daemon configuration
+  ansible.builtin.copy:
+    dest: /etc/docker/daemon.json
+    content: |
+      {
+        "insecure-registries": ["{{ private_registry_url }}"],
+        "log-driver": "json-file",
+        "log-opts": {
+          "max-size": "100m",
+          "max-file": "3"
+        },
+        "storage-driver": "overlay2"
+      }
+    mode: '0644'
+  notify: Restart Docker
+
+- name: Enable and start Docker
+  ansible.builtin.systemd:
+    name: docker
+    state: started
+    enabled: true
+
+- name: Add ansible user to docker group
+  ansible.builtin.user:
+    name: "{{ ansible_user }}"
+    groups: docker
+    append: true
+
+# ── Helm ─────────────────────────────────────────────────────────────────────
+- name: Install Helm
+  ansible.builtin.unarchive:
+    src: "https://get.helm.sh/helm-{{ helm_version }}-linux-amd64.tar.gz"
+    dest: /usr/local/bin
+    remote_src: true
+    validate_certs: false
+    extra_opts:
+      - "--strip-components=1"
+      - "linux-amd64/helm"
+    creates: /usr/local/bin/helm
+    mode: '0755'
+
+- name: Symlink helm into standard path for ansible
+  ansible.builtin.file:
+    src: /usr/local/bin/helm
+    dest: /usr/bin/helm
+    state: link
+
+- name: Add common Helm repos
+  kubernetes.core.helm_repository:
+    name: "{{ item.name }}"
+    repo_url: "{{ item.url }}"
+  loop:
+    - { name: stable,     url: "https://charts.helm.sh/stable" }
+    - { name: jetstack,   url: "https://charts.jetstack.io" }
+    - { name: rancher-stable, url: "https://releases.rancher.com/server-charts/stable" }
+  ignore_errors: true   # helm module may not be available until galaxy install
+
+- name: Enable Helm bash completion
+  ansible.builtin.shell: helm completion bash > /etc/bash_completion.d/helm
+  args:
+    creates: /etc/bash_completion.d/helm
+
+# ── kubectl ──────────────────────────────────────────────────────────────────
+- name: Add Kubernetes yum repo
+  ansible.builtin.copy:
+    dest: /etc/yum.repos.d/kubernetes.repo
+    content: |
+      [kubernetes]
+      name=Kubernetes
+      baseurl=https://pkgs.k8s.io/core:/stable:/v1.30/rpm/
+      enabled=1
+      gpgcheck=1
+      gpgkey=https://pkgs.k8s.io/core:/stable:/v1.30/rpm/repodata/repomd.xml.key
+    mode: '0644'
+
+- name: Install kubectl
+  ansible.builtin.dnf:
+    name: kubectl
+    state: present
+
+- name: Enable kubectl bash completion
+  ansible.builtin.shell: kubectl completion bash > /etc/bash_completion.d/kubectl
+  args:
+    creates: /etc/bash_completion.d/kubectl
+
+# ── Git config ───────────────────────────────────────────────────────────────
+- name: Ensure git is latest
+  ansible.builtin.dnf:
+    name: git
+    state: latest
+
+- name: Create workspace directory
+  ansible.builtin.file:
+    path: /opt/lab/workspace
+    state: directory
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: '0755'
+
+# ── Tool versions summary ─────────────────────────────────────────────────────
+- name: Print installed tool versions
+  ansible.builtin.shell: |
+    echo "=== DevTools Versions ==="
+    docker --version
+    docker compose version
+    helm version --short
+    kubectl version --client --short 2>/dev/null || kubectl version --client
+    git --version
+  register: tool_versions
+  changed_when: false
+
+- name: Display tool versions
+  ansible.builtin.debug:
+    msg: "{{ tool_versions.stdout_lines }}"

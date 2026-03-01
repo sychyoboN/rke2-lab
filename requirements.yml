@@ -1,0 +1,16 @@
+---
+# Ansible Galaxy requirements for the Hyper-V lab playbooks.
+# Install with:  ansible-galaxy collection install -r requirements.yml
+
+collections:
+  # ansible.posix — selinux, sysctl (used in roles/common)
+  - name: ansible.posix
+    version: ">=1.5.0"
+
+  # community.general — timezone, modprobe (used in roles/common)
+  - name: community.general
+    version: ">=8.0.0"
+
+  # kubernetes.core — helm_repository (used in roles/devtools)
+  - name: kubernetes.core
+    version: ">=2.2.0"

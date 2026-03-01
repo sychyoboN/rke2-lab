@@ -1,0 +1,111 @@
+---
+# Rancher role: Deploy cert-manager + Rancher Manager via Helm
+
+- name: Set KUBECONFIG fact
+  ansible.builtin.set_fact:
+    kubeconfig: /etc/rancher/rke2/rke2.yaml
+    kubectl: /var/lib/rancher/rke2/bin/kubectl
+    helm: /usr/local/bin/helm
+
+# ── Helm repos ────────────────────────────────────────────────────────────────
+- name: Add Jetstack Helm repo (cert-manager)
+  ansible.builtin.command: >
+    {{ helm }} repo add jetstack https://charts.jetstack.io
+  environment:
+    KUBECONFIG: "{{ kubeconfig }}"
+  changed_when: false
+
+- name: Add Rancher stable Helm repo
+  ansible.builtin.command: >
+    {{ helm }} repo add rancher-stable https://releases.rancher.com/server-charts/stable
+  environment:
+    KUBECONFIG: "{{ kubeconfig }}"
+  changed_when: false
+
+- name: Update Helm repos
+  ansible.builtin.command: "{{ helm }} repo update"
+  environment:
+    KUBECONFIG: "{{ kubeconfig }}"
+  changed_when: false
+
+# ── cert-manager ──────────────────────────────────────────────────────────────
+- name: Create cert-manager namespace
+  ansible.builtin.command: >
+    {{ kubectl }} --kubeconfig {{ kubeconfig }}
+    create namespace cert-manager
+  register: cm_ns
+  changed_when: cm_ns.rc == 0
+  failed_when: cm_ns.rc != 0 and 'already exists' not in cm_ns.stderr
+
+- name: Install cert-manager CRDs
+  ansible.builtin.command: >
+    {{ kubectl }} --kubeconfig {{ kubeconfig }}
+    apply -f https://github.com/cert-manager/cert-manager/releases/download/{{ cert_manager_version }}/cert-manager.crds.yaml
+  changed_when: true
+
+- name: Install cert-manager via Helm
+  ansible.builtin.command: >
+    {{ helm }} upgrade --install cert-manager jetstack/cert-manager
+    --namespace cert-manager
+    --version {{ cert_manager_version }}
+    --set installCRDs=false
+    --kubeconfig {{ kubeconfig }}
+    --wait
+  changed_when: true
+
+- name: Wait for cert-manager to be ready
+  ansible.builtin.command: >
+    {{ kubectl }} --kubeconfig {{ kubeconfig }}
+    rollout status deployment/cert-manager -n cert-manager --timeout=120s
+  changed_when: false
+
+# ── Rancher ───────────────────────────────────────────────────────────────────
+- name: Create cattle-system namespace
+  ansible.builtin.command: >
+    {{ kubectl }} --kubeconfig {{ kubeconfig }}
+    create namespace cattle-system
+  register: cattle_ns
+  changed_when: cattle_ns.rc == 0
+  failed_when: cattle_ns.rc != 0 and 'already exists' not in cattle_ns.stderr
+
+- name: Install Rancher Manager via Helm
+  ansible.builtin.command: >
+    {{ helm }} upgrade --install rancher rancher-stable/rancher
+    --namespace cattle-system
+    --version {{ rancher_version }}
+    --set hostname={{ rancher_hostname }}
+    --set bootstrapPassword={{ rancher_bootstrap_password }}
+    --set ingress.tls.source=rancher
+    --set replicas=1
+    --kubeconfig {{ kubeconfig }}
+    --wait
+    --timeout 10m
+  changed_when: true
+
+- name: Wait for Rancher deployment to be ready
+  ansible.builtin.command: >
+    {{ kubectl }} --kubeconfig {{ kubeconfig }}
+    rollout status deployment/rancher -n cattle-system --timeout=600s
+  changed_when: false
+  register: rancher_status
+
+# ── Get Rancher service info ───────────────────────────────────────────────────
+- name: Get Rancher ingress details
+  ansible.builtin.command: >
+    {{ kubectl }} --kubeconfig {{ kubeconfig }}
+    get ingress -n cattle-system -o wide
+  register: rancher_ingress
+  changed_when: false
+
+- name: Display Rancher access information
+  ansible.builtin.debug:
+    msg:
+      - "================================================================"
+      - "  Rancher Manager is READY!"
+      - "================================================================"
+      - "  URL:      https://{{ rancher_hostname }}"
+      - "  Password: {{ rancher_bootstrap_password }}"
+      - ""
+      - "  Kubeconfig: /etc/rancher/rke2/rke2.yaml  (on lab-k8s)"
+      - "  Or copy to devtools: scp lab-k8s:/etc/rancher/rke2/rke2.yaml ~/.kube/config"
+      - "================================================================"

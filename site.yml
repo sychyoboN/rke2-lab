@@ -1,0 +1,24 @@
+---
+# =============================================================================
+# Lab Infrastructure Playbook
+# Targets:
+#   - lab-devtools : DevTools VM + Private Docker Registry
+#   - lab-k8s      : RKE2 single-node cluster + Rancher
+# =============================================================================
+
+- name: Apply common baseline to all hosts
+  hosts: all
+  roles:
+    - common
+
+- name: Configure DevTools VM
+  hosts: devtools
+  roles:
+    - devtools
+    - registry
+
+- name: Deploy RKE2 Kubernetes + Rancher
+  hosts: k8s_nodes
+  roles:
+    - rke2
+    - rancher
