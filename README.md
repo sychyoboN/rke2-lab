@@ -16,6 +16,7 @@ Automated build of two Rocky Linux 10 VMs on Hyper-V using **PowerShell** (VM pr
 │  │  • Helm                  │   │  • Rancher Manager 2.9    │   │
 │  │  • kubectl               │   │  • cert-manager           │   │
 │  │  • Docker Registry :5000 │   │  • ArgoCD                 │   │
+│  │  • Pi-hole DNS :53/:8080 │   │                           │   │
 │  └──────────┬──────────────┘   └──────────────┬────────────┘   │
 │             └──────────────────────────────────┘               │
 │                      LabSwitch (192.168.100.0/24)               │
@@ -44,9 +45,10 @@ Automated build of two Rocky Linux 10 VMs on Hyper-V using **PowerShell** (VM pr
 ├── group_vars/
 │   └── all.yml                 # Versions, IPs, passwords
 └── roles/
-    ├── common/                 # Baseline: SELinux, sysctl, packages
+    ├── common/                 # Baseline: SELinux, sysctl, packages, /etc/hosts
     ├── devtools/               # Git, Docker, Helm, kubectl
     ├── registry/               # Private Docker registry (port 5000)
+    ├── pihole/                 # Pi-hole DNS server (port 53 / web UI 8080)
     ├── rke2/                   # RKE2 server install + kubeconfig
     ├── rancher/                # cert-manager + Rancher Manager
     └── argocd/                 # ArgoCD GitOps engine
@@ -67,7 +69,7 @@ This creates:
 - `lab-devtools` — 4 vCPU / 8 GB RAM / 80 GB VHDX
 - `lab-k8s` — 4 vCPU / 32 GB RAM / 120 GB VHDX
 - Both VMs boot the Rocky Linux 10 minimal ISO
-- Windows hosts file entries for `lab-devtools`, `lab-k8s`, `rancher.lab.local`, and `argocd.lab.local` are added automatically
+- Windows hosts file entries for `lab-devtools`, `lab-k8s`, `rancher.lab`, `argocd.lab` are added automatically
 
 ### Step 2 — Install Rocky Linux 10 on each VM
 
@@ -79,7 +81,7 @@ Boot each VM in Hyper-V and complete the text/graphical installer:
 - **Network & Hostname:**
   - `lab-devtools`: static IP `192.168.100.10/24`, GW `192.168.100.1`, DNS `8.8.8.8`
   - `lab-k8s`: static IP `192.168.100.20/24`, GW `192.168.100.1`, DNS `8.8.8.8`
-- Create user `ansible` with a password, **add to wheel group**
+- Using Moba Xterm - Login with user `ansible` with the set password
 - After first boot, enable passwordless sudo:
   ```bash
   echo 'ansible ALL=(ALL) NOPASSWD:ALL' | sudo tee /etc/sudoers.d/ansible
@@ -119,14 +121,14 @@ Total runtime: approximately **20–30 minutes** (mostly RKE2 + Rancher + ArgoCD
 
 ### Step 5 — Access Rancher
 
-> The hosts file entries (`lab-devtools`, `lab-k8s`, `rancher.lab.local`, `argocd.lab.local`) were added automatically by `New-LabVMs.ps1` in Step 1.
+> The hosts file entries (`rancher.lab`, `argocd.lab`, etc.) were added automatically by Ansible into Pi-Hole DNS.
 
-Open: **https://rancher.lab.local**
+Open: **https://rancher.lab**
 Bootstrap password: `Admin1234!` (change in `group_vars/all.yml` before deploying!)
 
 ### Step 6 — Access ArgoCD
 
-Open: **http://argocd.lab.local**
+Open: **http://argocd.lab**
 
 | Field | Value |
 |---|---|
@@ -134,13 +136,47 @@ Open: **http://argocd.lab.local**
 | Password | Printed at the end of the Ansible run — or retrieve manually: |
 
 ```bash
-# Retrieve the initial admin password from the cluster
 kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml \
   get secret argocd-initial-admin-secret -n argocd \
   -o jsonpath='{.data.password}' | base64 -d
 ```
 
 > Change the password after first login via **User Info → Update Password**, then delete the `argocd-initial-admin-secret` secret.
+
+### Step 7 — Access Pi-hole
+
+Open: **http://192.168.100.10:8080/admin**
+Password: `Admin1234!` (change `pihole_web_password` in `group_vars/all.yml`)
+
+Pi-hole is automatically configured as the DNS server for both lab VMs. To use it from **Windows or WSL** and get full `*.lab` resolution without a hosts file:
+
+**Windows:** Control Panel → Network adapter → IPv4 → set Preferred DNS to `192.168.100.10`
+
+**WSL2:**
+```bash
+# /etc/resolv.conf (prevent WSL from overwriting it first)
+echo '[network]' | sudo tee /etc/wsl.conf
+echo 'generateResolvConf = false' | sudo tee -a /etc/wsl.conf
+
+sudo tee /etc/resolv.conf <<EOF
+nameserver 192.168.100.10
+nameserver 1.1.1.1
+search lab
+EOF
+```
+
+Pi-hole resolves these `lab` names out of the box:
+
+| Hostname | IP |
+|---|---|
+| `lab-devtools` / `lab-devtools.lab` | 192.168.100.10 |
+| `lab-k8s` / `lab-k8s.lab` | 192.168.100.20 |
+| `rancher.lab` | 192.168.100.20 |
+| `argocd.lab` | 192.168.100.20 |
+| `grafana.lab` | 192.168.100.20 |
+| `sample-app.lab` | 192.168.100.20 |
+
+> Add new `*.lab` names in `roles/pihole/tasks/main.yml` under the `custom.list` block, then re-run `--tags pihole`.
 
 ## Using the Private Registry
 
@@ -156,9 +192,6 @@ docker pull 192.168.100.10:5000/myimage:latest
 
 # List all images in the registry
 curl http://192.168.100.10:5000/v2/_catalog
-
-# List tags for an image
-curl http://192.168.100.10:5000/v2/myimage/tags/list
 ```
 
 On the k8s node, Kubernetes is pre-configured to mirror pulls through the registry.
@@ -168,6 +201,9 @@ On the k8s node, Kubernetes is pre-configured to mirror pulls through the regist
 ```bash
 # Only configure devtools
 ansible-playbook site.yml --tags devtools,registry
+
+# Only deploy Pi-hole (and reconfigure DNS on all hosts)
+ansible-playbook site.yml --tags pihole
 
 # Only deploy RKE2 (skip Rancher + ArgoCD)
 ansible-playbook site.yml --tags rke2
@@ -193,10 +229,12 @@ All versions and IPs are in `group_vars/all.yml`:
 | `cert_manager_version` | v1.15.3 | cert-manager version |
 | `helm_version` | v3.16.1 | Helm version |
 | `kubectl_version` | v1.30.4 | kubectl version |
-| `rancher_hostname` | rancher.lab.local | Rancher ingress hostname |
+| `rancher_hostname` | rancher.lab | Rancher ingress hostname |
 | `rancher_bootstrap_password` | Admin1234! | **Change this!** |
 | `argocd_chart_version` | 7.7.3 | ArgoCD Helm chart version |
-| `argocd_hostname` | argocd.lab.local | ArgoCD ingress hostname |
+| `argocd_hostname` | argocd.lab | ArgoCD ingress hostname |
+| `pihole_web_port` | 8080 | Pi-hole web UI port |
+| `pihole_web_password` | Admin1234! | **Change this!** |
 | `private_registry_port` | 5000 | Registry listen port |
 
 ## Troubleshooting
@@ -218,6 +256,15 @@ kubectl describe pod -n cattle-system <pod-name>
 kubectl get pods -n argocd
 kubectl get ingress -n argocd
 kubectl describe pod -n argocd -l app.kubernetes.io/name=argocd-server
+```
+
+**Pi-hole not resolving / port 53 in use:**
+```bash
+# On lab-devtools
+sudo systemctl status lab-pihole
+sudo docker compose -f /opt/pihole/docker-compose.yml logs
+# Test DNS resolution
+dig @192.168.100.10 rancher.lab
 ```
 
 **Registry unreachable:**

@@ -62,7 +62,7 @@
       write-kubeconfig-mode: "0644"
       tls-san:
         - "{{ inventory_hostname }}"
-        - "{{ inventory_hostname }}.lab.local"
+        - "{{ inventory_hostname }}.lab"
         - "{{ ansible_host }}"
         - "{{ rancher_hostname }}"
       # Mirror all image pulls through private registry

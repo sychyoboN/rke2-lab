@@ -2,7 +2,7 @@
 # =============================================================================
 # Lab Infrastructure Playbook
 # Targets:
-#   - lab-devtools : DevTools VM + Private Docker Registry
+#   - lab-devtools : DevTools VM + Private Docker Registry + Pi-hole DNS
 #   - lab-k8s      : RKE2 single-node cluster + Rancher + ArgoCD
 # =============================================================================
 
@@ -19,6 +19,8 @@
       tags: devtools
     - role: registry
       tags: registry
+    - role: pihole
+      tags: pihole
 
 - name: Deploy RKE2 Kubernetes + Rancher + ArgoCD
   hosts: k8s_nodes

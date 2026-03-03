@@ -38,11 +38,12 @@
       - openssl
     state: present
 
-- name: Enable and start iptables
+- name: Disable iptables service (Docker manages its own chains; iptables-services conflicts)
   ansible.builtin.systemd:
     name: iptables
-    state: started
-    enabled: true
+    state: stopped
+    enabled: false
+  ignore_errors: true
 
 - name: Set timezone to UTC
   community.general.timezone:
@@ -52,8 +53,8 @@
   ansible.builtin.blockinfile:
     path: /etc/hosts
     block: |
-      {{ private_registry_host }}  lab-devtools lab-devtools.lab.local
-      {{ k8s_host }}  lab-k8s lab-k8s.lab.local {{ rancher_hostname }}
+      {{ private_registry_host }}  lab-devtools lab-devtools.lab
+      {{ k8s_host }}  lab-k8s lab-k8s.lab {{ rancher_hostname }} {{ argocd_hostname }} grafana.lab sample-app.lab
     marker: "# {mark} LAB HOSTS"
 
 - name: Ensure swap is disabled (required for Kubernetes)

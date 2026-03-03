@@ -24,10 +24,10 @@ param(
     [string]$DevtoolsIP     = "192.168.100.10",
     [string]$K8sIP          = "192.168.100.20",
     [string]$DNS            = "8.8.8.8",
-    [switch]$SkipVMCreation,  # Set this if VMs exist, jump straight to IP display
+    [switch]$SkipVMCreation, # Set this if VMs exist, jump straight to IP display
     [string]$DefaultSwitchName = "Default Switch",
     [string]$Timezone          = "Australia/Sydney",
-    [SecureString]$AnsiblePassword                     # prompted if not supplied
+    [SecureString]$AnsiblePassword # prompted if not supplied
 )
 
 if (-not $AnsiblePassword) {
@@ -288,7 +288,7 @@ Write-Step "Updating Windows hosts file"
 $hostsFile  = "$env:SystemRoot\System32\drivers\etc\hosts"
 $labEntries = @(
     "$DevtoolsIP`tlab-devtools"
-    "$K8sIP`tlab-k8s`trancher.lab.local`targocd.lab.local"
+    "$K8sIP`tlab-k8s"
 )
 
 $hostsContent = [System.IO.File]::ReadAllText($hostsFile)
