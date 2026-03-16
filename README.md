@@ -6,19 +6,20 @@ Automated build of two Rocky Linux 10 VMs on Hyper-V using **PowerShell** (VM pr
 ┌─────────────────────────────────────────────────────────────────┐
 │  Windows Hyper-V Host                                           │
 │                                                                 │
-│  ┌─────────────────────────┐   ┌───────────────────────────┐   │
+│  ┌──────────────────────────┐   ┌───────────────────────────┐   │
 │  │  lab-devtools            │   │  lab-k8s                  │   │
 │  │  192.168.100.10          │   │  192.168.100.20           │   │
 │  │                          │   │                           │   │
-│  │  • Git                   │   │  • RKE2 (k8s v1.30)      │   │
+│  │  • Git                   │   │  • RKE2 (single-node)     │   │
 │  │  • Docker CE             │   │  • Single-node control    │   │
 │  │  • Docker Compose        │   │    plane + worker         │   │
 │  │  • Helm                  │   │  • Rancher Manager 2.9    │   │
 │  │  • kubectl               │   │  • cert-manager           │   │
+│  │  • k9s                   │   │                           │   │
 │  │  • Docker Registry :5000 │   │  • ArgoCD                 │   │
 │  │  • Pi-hole DNS :53/:8080 │   │                           │   │
-│  └──────────┬──────────────┘   └──────────────┬────────────┘   │
-│             └──────────────────────────────────┘               │
+│  └──────────┬───────────────┘   └──────────────┬────────────┘   │
+│             └──────────────────────────────────┘                │
 │                      LabSwitch (192.168.100.0/24)               │
 │                      NAT → Internet                             │
 └─────────────────────────────────────────────────────────────────┘
@@ -36,7 +37,7 @@ Automated build of two Rocky Linux 10 VMs on Hyper-V using **PowerShell** (VM pr
 
 ```
 ├── powershell/
-│   ├── New-LabVMs.ps1          # Creates Hyper-V VMs + NAT switch + hosts entries
+│   ├── New-LabVMs.ps1          # Creates Hyper-V VMs + NAT switch + kickstart disks
 │   └── Setup-AnsibleSSH.ps1   # SSH key setup for Ansible auth
 ├── ansible.cfg
 ├── site.yml                    # Main playbook
@@ -46,7 +47,7 @@ Automated build of two Rocky Linux 10 VMs on Hyper-V using **PowerShell** (VM pr
 │   └── all.yml                 # Versions, IPs, passwords
 └── roles/
     ├── common/                 # Baseline: SELinux, sysctl, packages, /etc/hosts
-    ├── devtools/               # Git, Docker, Helm, kubectl
+    ├── devtools/               # Git, Docker, Helm, kubectl, k9s
     ├── registry/               # Private Docker registry (port 5000)
     ├── pihole/                 # Pi-hole DNS server (port 53 / web UI 8080)
     ├── rke2/                   # RKE2 server install + kubeconfig
@@ -67,27 +68,29 @@ Automated build of two Rocky Linux 10 VMs on Hyper-V using **PowerShell** (VM pr
 This creates:
 - Hyper-V internal switch `LabSwitch` with NAT (192.168.100.0/24)
 - `lab-devtools` — 4 vCPU / 8 GB RAM / 80 GB VHDX
-- `lab-k8s` — 4 vCPU / 32 GB RAM / 120 GB VHDX
-- Both VMs boot the Rocky Linux 10 minimal ISO
-- Windows hosts file entries for `lab-devtools`, `lab-k8s`, `rancher.lab`, `argocd.lab` are added automatically
+- `lab-k8s` — 8 vCPU / 32 GB RAM / 120 GB VHDX
+- Both VMs boot the Rocky Linux 10 minimal ISO with an attached OEMDRV kickstart disk
+- Windows hosts file entries for `lab-devtools` and `lab-k8s` are added automatically
 
-### Step 2 — Install Rocky Linux 10 on each VM
+### Step 2 — Run the Rocky Linux installer on each VM
 
-Boot each VM in Hyper-V and complete the text/graphical installer:
+Boot each VM in Hyper-V and start the unattended kickstart install:
 
 **For BOTH VMs:**
-- Partitioning: Automatic
-- Minimal install (no GUI needed)
-- **Network & Hostname:**
-  - `lab-devtools`: static IP `192.168.100.10/24`, GW `192.168.100.1`, DNS `8.8.8.8`
-  - `lab-k8s`: static IP `192.168.100.20/24`, GW `192.168.100.1`, DNS `8.8.8.8`
-- Using Moba Xterm - Login with user `ansible` with the set password
-- After first boot, enable passwordless sudo:
+- At the boot menu, select `anaconda kickstart`
+- The kickstart automatically configures:
+  - Minimal Rocky Linux 10 install
+  - Static lab NIC on `eth0`
+    - `lab-devtools`: `192.168.100.10/24`, GW `192.168.100.1`, DNS `8.8.8.8`
+    - `lab-k8s`: `192.168.100.20/24`, GW `192.168.100.1`, DNS `8.8.8.8`
+  - DHCP internet NIC on `eth1` via Hyper-V `Default Switch`
+  - `ansible` user with passwordless sudo
+  - `sshd` enabled at boot
+- After the first reboot, verify you can log in:
   ```bash
-  echo 'ansible ALL=(ALL) NOPASSWD:ALL' | sudo tee /etc/sudoers.d/ansible
-  sudo chmod 0440 /etc/sudoers.d/ansible
+  ssh ansible@192.168.100.10
+  ssh ansible@192.168.100.20
   ```
-- Enable SSH: `sudo systemctl enable --now sshd`
 
 ### Step 3 — Set up SSH key authentication
 
@@ -103,6 +106,9 @@ This generates `~/.ssh/lab_rsa` and installs the public key on both VMs.
 # Copy SSH key into WSL
 cp "/mnt/c/Users/<user profile>/.ssh/lab_rsa" ~/.ssh/lab_rsa
 chmod 600 ~/.ssh/lab_rsa
+
+# Point Ansible at the repo config when running from a Windows-mounted path
+export ANSIBLE_CONFIG=/mnt/c/Users/<user profile>/OneDrive/Documents/01_VS_CODE/rke2-lab/ansible.cfg
 
 # Install Ansible if needed
 pip install ansible
@@ -121,7 +127,7 @@ Total runtime: approximately **20–30 minutes** (mostly RKE2 + Rancher + ArgoCD
 
 ### Step 5 — Access Rancher
 
-> The hosts file entries (`rancher.lab`, `argocd.lab`, etc.) were added automatically by Ansible into Pi-Hole DNS.
+`rancher.lab` is published through Pi-hole DNS for the lab network and is also added to `/etc/hosts` on the lab VMs by Ansible.
 
 Open: **https://rancher.lab**
 Bootstrap password: `Admin1234!` (change in `group_vars/all.yml` before deploying!)
@@ -173,10 +179,10 @@ Pi-hole resolves these `lab` names out of the box:
 | `lab-k8s` / `lab-k8s.lab` | 192.168.100.20 |
 | `rancher.lab` | 192.168.100.20 |
 | `argocd.lab` | 192.168.100.20 |
-| `grafana.lab` | 192.168.100.20 |
-| `sample-app.lab` | 192.168.100.20 |
 
-> Add new `*.lab` names in `roles/pihole/tasks/main.yml` under the `custom.list` block, then re-run `--tags pihole`.
+> Add new Pi-hole DNS names in `group_vars/all.yml` under `pihole_dns_records`, then re-run `--tags pihole`.
+>
+> `grafana.lab` and `sample-app.lab` are currently added only to `/etc/hosts` on the lab VMs by `roles/common/tasks/main.yml`.
 
 ## Using the Private Registry
 
@@ -224,15 +230,17 @@ All versions and IPs are in `group_vars/all.yml`:
 
 | Variable | Default | Description |
 |---|---|---|
-| `rke2_version` | v1.30.4+rke2r1 | RKE2 / Kubernetes version |
-| `rancher_version` | 2.9.2 | Rancher Manager version |
-| `cert_manager_version` | v1.15.3 | cert-manager version |
-| `helm_version` | v3.16.1 | Helm version |
-| `kubectl_version` | v1.30.4 | kubectl version |
+| `rke2_version` | v1.34.5+rke2r1 | RKE2 / Kubernetes version |
+| `rancher_version` | 2.13.3 | Rancher Manager version |
+| `cert_manager_version` | v1.19.4 | cert-manager version |
+| `helm_version` | v4.1.3 | Helm version |
+| `kubectl_version` | v1.34.5 | kubectl version |
+| `k9s_version` | v0.50.18 | k9s version on `lab-devtools` |
 | `rancher_hostname` | rancher.lab | Rancher ingress hostname |
 | `rancher_bootstrap_password` | Admin1234! | **Change this!** |
 | `argocd_chart_version` | 7.7.3 | ArgoCD Helm chart version |
 | `argocd_hostname` | argocd.lab | ArgoCD ingress hostname |
+| `pihole_version` | 2025.03.0 | Pi-hole container tag |
 | `pihole_web_port` | 8080 | Pi-hole web UI port |
 | `pihole_web_password` | Admin1234! | **Change this!** |
 | `private_registry_port` | 5000 | Registry listen port |

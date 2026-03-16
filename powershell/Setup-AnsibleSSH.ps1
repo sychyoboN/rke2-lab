@@ -83,7 +83,7 @@ Write-Host "  export ANSIBLE_CONFIG=/mnt/c/Users/$env:USERNAME/OneDrive/Document
 Write-Host ""
 Write-Host "  # Then run the playbook:"
 Write-Host "  cd /mnt/c/Users/$env:USERNAME/OneDrive/Documents/01_VS_CODE/rke2-lab"
-Write-Host "  ansible-galaxy install -r requirements.yml"
+Write-Host "  ansible-galaxy collection install -r requirements.yml"
 Write-Host "  ansible-playbook site.yml"
 Write-Host ""
 Write-Host "  # Permanent fix: add to /etc/wsl.conf then run 'wsl --shutdown':"

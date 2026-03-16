@@ -120,3 +120,29 @@
       - "  Kubeconfig: /etc/rancher/rke2/rke2.yaml  (on lab-k8s)"
       - "  Or copy to devtools: scp lab-k8s:/etc/rancher/rke2/rke2.yaml ~/.kube/config"
       - "================================================================"
+
+# ── Create kubeconfig on devtools ─────────────────────────────────────────────
+- name: Read kubeconfig from lab-k8s
+  ansible.builtin.slurp:
+    src: "{{ kubeconfig }}"
+  register: rke2_kubeconfig_raw
+
+- name: Ensure kube directory exists on devtools
+  ansible.builtin.file:
+    path: "/home/{{ ansible_user }}/.kube"
+    state: directory
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0755"
+  delegate_to: "{{ groups['devtools'][0] }}"
+  become: true
+
+- name: Install kubeconfig for devtools
+  ansible.builtin.copy:
+    dest: "/home/{{ ansible_user }}/.kube/config"
+    content: "{{ rke2_kubeconfig_raw.content | b64decode | regex_replace('https://127.0.0.1:6443', 'https://' ~ ansible_host ~ ':6443') }}"
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0600"
+  delegate_to: "{{ groups['devtools'][0] }}"
+  become: true

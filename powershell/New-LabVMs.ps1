@@ -3,14 +3,14 @@
 
 <#
 .SYNOPSIS
-    Provisions two Rocky Linux 9 VMs on Hyper-V for a dev lab.
+    Provisions two Rocky Linux 10 VMs on Hyper-V for a dev lab.
     VM1: DevTools + Private Docker Registry
     VM2: Single-node RKE2 Kubernetes + Rancher
 
 .NOTES
     Pre-requisites:
     - Hyper-V enabled on Windows host
-    - Rocky Linux 9 ISO downloaded (set $ISOPath below)
+    - Rocky Linux 10 ISO downloaded (set $ISOPath below)
     - Run from an elevated PowerShell session
 #>
 

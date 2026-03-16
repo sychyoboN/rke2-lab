@@ -61,14 +61,11 @@
             - "{{ pihole_web_port }}:80"
           environment:
             TZ: "UTC"
-            # v6 env vars (FTLCONF_*)
             FTLCONF_webserver_api_password: "{{ pihole_web_password }}"
             FTLCONF_dns_upstreams: "1.1.1.1;8.8.8.8"
             FTLCONF_dns_listeningMode: "all"
-            # Local DNS records — Pi-hole v6 ignores custom.list; use FTLCONF_dns_hosts instead.
-            # Format: semicolon-separated "IP hostname" pairs.
             FTLCONF_dns_hosts: "{% for hostname, ip in pihole_dns_records.items() %}{{ ip }} {{ hostname }}{% if not loop.last %};{% endif %}{% endfor %}"
-            # v5 fallback (ignored by v6, harmless)
+            FTLCONF_misc_dnsmasq_lines: "address=/apps.lab/{{ k8s_host }}"
             WEBPASSWORD: "{{ pihole_web_password }}"
             PIHOLE_DNS_1: "1.1.1.1"
             PIHOLE_DNS_2: "8.8.8.8"

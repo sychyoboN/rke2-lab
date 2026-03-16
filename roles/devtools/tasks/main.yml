@@ -1,5 +1,5 @@
 ---
-# DevTools role: Git, Docker CE, Docker Compose, Helm, kubectl
+# DevTools role: Git, Docker CE, Docker Compose, Helm, kubectl, k9s
 
 # ── Docker CE ────────────────────────────────────────────────────────────────
 - name: Add Docker CE repository
@@ -102,6 +102,23 @@
   args:
     creates: /etc/bash_completion.d/kubectl
 
+# ── k9s ──────────────────────────────────────────────────────────────────────
+- name: Install k9s
+  ansible.builtin.unarchive:
+    src: "https://github.com/derailed/k9s/releases/download/{{ k9s_version }}/k9s_Linux_amd64.tar.gz"
+    dest: /usr/local/bin
+    remote_src: true
+    extra_opts:
+      - "k9s"
+    creates: /usr/local/bin/k9s
+    mode: '0755'
+
+- name: Symlink k9s into standard path for ansible
+  ansible.builtin.file:
+    src: /usr/local/bin/k9s
+    dest: /usr/bin/k9s
+    state: link
+
 # ── Git config ───────────────────────────────────────────────────────────────
 - name: Ensure git is latest
   ansible.builtin.dnf:
@@ -125,6 +142,7 @@
     helm version --short
     kubectl version --client --short 2>/dev/null || kubectl version --client
     git --version
+    k9s version
   register: tool_versions
   changed_when: false
 
