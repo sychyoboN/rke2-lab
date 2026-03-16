@@ -13,7 +13,7 @@
     enabled: false
   ignore_errors: true
 
-- name: Update all packages
+- name: Update all packages (This may take a while...)
   ansible.builtin.dnf:
     name: "*"
     state: latest
@@ -38,11 +38,12 @@
       - openssl
     state: present
 
-- name: Enable and start iptables
+- name: Disable iptables service (Docker manages its own chains; iptables-services conflicts)
   ansible.builtin.systemd:
     name: iptables
-    state: started
-    enabled: true
+    state: stopped
+    enabled: false
+  ignore_errors: true
 
 - name: Set timezone to UTC
   community.general.timezone:
@@ -52,8 +53,8 @@
   ansible.builtin.blockinfile:
     path: /etc/hosts
     block: |
-      192.168.100.10  lab-devtools lab-devtools.lab.local
-      192.168.100.20  lab-k8s lab-k8s.lab.local rancher.lab.local
+      {{ private_registry_host }}  lab-devtools lab-devtools.lab
+      {{ k8s_host }}  lab-k8s lab-k8s.lab {{ rancher_hostname }} {{ argocd_hostname }} grafana.lab sample-app.lab
     marker: "# {mark} LAB HOSTS"
 
 - name: Ensure swap is disabled (required for Kubernetes)

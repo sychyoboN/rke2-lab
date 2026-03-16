@@ -2,55 +2,39 @@
 # RKE2 role: Install and configure RKE2 as a single-node control plane
 # Also installs Helm and kubectl on this node for Rancher deployment
 
-# ── Pre-flight ────────────────────────────────────────────────────────────────
-# iptables-services (from common role) sets a DROP default on FORWARD, which
-# blocks pod → host NAT and breaks cluster DNS/internet access.
-# These rules explicitly allow RKE2's pod and service CIDRs to be forwarded.
-- name: Allow iptables FORWARD for established/related connections
-  ansible.builtin.iptables:
-    chain: FORWARD
-    ctstate: ESTABLISHED,RELATED
-    jump: ACCEPT
-    action: insert
-    rule_num: 1
-    comment: "Allow established/related forward"
+# ── Iptables ──────────────────────────────────────────────────────────────────
+# Write the exact ruleset we want so rule order is controlled:
+#   INPUT  — ACCEPT required ports first, then REJECT everything else
+#   FORWARD — no REJECT; default ACCEPT policy lets RKE2/Calico manage it
+# Using iptables-restore instead of iptables-save avoids capturing whatever
+# stale/out-of-order rules happened to be in the kernel at run time.
+- name: Write k8s node iptables ruleset
+  ansible.builtin.copy:
+    dest: /etc/sysconfig/iptables
+    mode: '0600'
+    content: |
+      # Managed by Ansible - do not edit manually
+      *filter
+      :INPUT ACCEPT [0:0]
+      :FORWARD ACCEPT [0:0]
+      :OUTPUT ACCEPT [0:0]
+      -A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+      -A INPUT -p icmp -j ACCEPT
+      -A INPUT -i lo -j ACCEPT
+      -A INPUT -p tcp -m state --state NEW -m tcp --dport 22 -j ACCEPT
+      -A INPUT -p tcp -m state --state NEW -m tcp --dport 80 -j ACCEPT
+      -A INPUT -p tcp -m state --state NEW -m tcp --dport 443 -j ACCEPT
+      -A INPUT -p tcp -m state --state NEW -m tcp --dport 6443 -j ACCEPT
+      -A INPUT -p tcp -m state --state NEW -m tcp --dport 9345 -j ACCEPT
+      -A INPUT -p tcp -m state --state NEW -m tcp --dport 10250 -j ACCEPT
+      -A INPUT -p udp -m udp --dport 8472 -j ACCEPT
+      -A INPUT -j REJECT --reject-with icmp-host-prohibited
+      COMMIT
 
-- name: Allow iptables FORWARD from RKE2 pod and service CIDRs (egress)
-  ansible.builtin.iptables:
-    chain: FORWARD
-    source: "{{ item }}"
-    jump: ACCEPT
-    comment: "RKE2 pod/service network forward egress"
-  loop:
-    - 10.42.0.0/16   # pod CIDR (Canal/Flannel default)
-    - 10.43.0.0/16   # service CIDR (RKE2 default)
-
-- name: Allow iptables FORWARD to RKE2 pod and service CIDRs (ingress via hostPort DNAT)
-  ansible.builtin.iptables:
-    chain: FORWARD
-    destination: "{{ item }}"
-    jump: ACCEPT
-    comment: "RKE2 pod/service network forward ingress"
-  loop:
-    - 10.42.0.0/16   # pod CIDR
-    - 10.43.0.0/16   # service CIDR
-
-- name: Allow iptables INPUT for nginx ingress (HTTP + HTTPS)
-  ansible.builtin.iptables:
-    chain: INPUT
-    protocol: tcp
-    destination_port: "{{ item }}"
-    ctstate: NEW
-    jump: ACCEPT
-    comment: "RKE2 nginx ingress"
-  loop:
-    - "80"
-    - "443"
-
-- name: Save iptables rules
-  ansible.builtin.command: service iptables save
+- name: Apply iptables ruleset
+  ansible.builtin.command: iptables-restore /etc/sysconfig/iptables
   changed_when: true
-
+  
 - name: Disable nm-cloud-setup (causes networking issues with RKE2)
   ansible.builtin.systemd:
     name: "{{ item }}"
@@ -77,10 +61,10 @@
       # RKE2 single-node server configuration
       write-kubeconfig-mode: "0644"
       tls-san:
-        - "lab-k8s"
-        - "lab-k8s.lab.local"
-        - "192.168.100.20"
-        - "rancher.lab.local"
+        - "{{ inventory_hostname }}"
+        - "{{ inventory_hostname }}.lab"
+        - "{{ ansible_host }}"
+        - "{{ rancher_hostname }}"
       # Mirror all image pulls through private registry
       # (Images not in registry will fall back to public)
       # cluster-cidr: 10.42.0.0/16   # default
@@ -176,19 +160,23 @@
     mode: '0644'
 
 # ── Install Helm on k8s node ──────────────────────────────────────────────────
-- name: Download Helm install script
-  ansible.builtin.get_url:
-    url: https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
-    dest: /tmp/get-helm.sh
+- name: Install Helm
+  ansible.builtin.unarchive:
+    src: "https://get.helm.sh/helm-{{ helm_version }}-linux-amd64.tar.gz"
+    dest: /usr/local/bin
+    remote_src: true
+    validate_certs: false
+    extra_opts:
+      - "--strip-components=1"
+      - "linux-amd64/helm"
+    creates: /usr/local/bin/helm
     mode: '0755'
 
-- name: Install Helm
-  ansible.builtin.command: /tmp/get-helm.sh
-  environment:
-    DESIRED_VERSION: "{{ helm_version }}"
-    PATH: "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-  args:
-    creates: /usr/local/bin/helm
+- name: Symlink helm into standard path for ansible
+  ansible.builtin.file:
+    src: /usr/local/bin/helm
+    dest: /usr/bin/helm
+    state: link
 
 # ── Verify cluster ────────────────────────────────────────────────────────────
 - name: Wait for all nodes to be Ready

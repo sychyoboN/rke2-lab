@@ -1,0 +1,171 @@
+---
+# Pi-hole role: DNS server for the lab network
+# Runs as a Docker container on lab-devtools, serves *.lab to all hosts
+
+# ── Free port 53 ──────────────────────────────────────────────────────────────
+- name: Stop and disable systemd-resolved (frees port 53 for Pi-hole)
+  ansible.builtin.systemd:
+    name: systemd-resolved
+    state: stopped
+    enabled: false
+  ignore_errors: true   # Not running on Rocky Linux minimal — that's fine
+
+# ── Directories ───────────────────────────────────────────────────────────────
+- name: Create Pi-hole config directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - /opt/pihole/etc-pihole
+    - /opt/pihole/etc-dnsmasq.d
+
+# ── Custom DNS records ────────────────────────────────────────────────────────
+# Pi-hole reads custom.list on startup and surfaces records in the Local DNS UI.
+# Add new entries to pihole_dns_records in group_vars/all.yml.
+# The notify handler does a docker restart so changes are picked up on re-runs.
+- name: Write custom.list
+  ansible.builtin.copy:
+    dest: /opt/pihole/etc-pihole/custom.list
+    mode: '0644'
+    content: "{% for hostname, ip in pihole_dns_records.items() %}{{ ip }} {{ hostname }}\n{% endfor %}"
+  notify: Restart Pi-hole
+
+# ── Clean FTL databases ───────────────────────────────────────────────────────
+# Wipe any stale/corrupt FTL databases before (re)deploying so FTL v6 creates
+# a fresh schema. Safe to run on re-runs — FTL recreates them on startup.
+- name: Remove stale FTL databases (recreated on container start)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /opt/pihole/etc-pihole/pihole-FTL.db
+    - /opt/pihole/etc-pihole/pihole-FTL.db-wal
+    - /opt/pihole/etc-pihole/pihole-FTL.db-shm
+    - /opt/pihole/etc-pihole/gravity.db
+
+# ── Docker Compose ────────────────────────────────────────────────────────────
+- name: Create Docker Compose file for Pi-hole
+  ansible.builtin.copy:
+    dest: /opt/pihole/docker-compose.yml
+    mode: '0644'
+    content: |
+      services:
+        pihole:
+          image: pihole/pihole:{{ pihole_version }}
+          container_name: lab-pihole
+          restart: always
+          ports:
+            - "53:53/tcp"
+            - "53:53/udp"
+            - "{{ pihole_web_port }}:80"
+          environment:
+            TZ: "UTC"
+            FTLCONF_webserver_api_password: "{{ pihole_web_password }}"
+            FTLCONF_dns_upstreams: "1.1.1.1;8.8.8.8"
+            FTLCONF_dns_listeningMode: "all"
+            FTLCONF_dns_hosts: "{% for hostname, ip in pihole_dns_records.items() %}{{ ip }} {{ hostname }}{% if not loop.last %};{% endif %}{% endfor %}"
+            FTLCONF_misc_dnsmasq_lines: "address=/apps.lab/{{ k8s_host }}"
+            WEBPASSWORD: "{{ pihole_web_password }}"
+            PIHOLE_DNS_1: "1.1.1.1"
+            PIHOLE_DNS_2: "8.8.8.8"
+            DNSMASQ_LISTENING: "all"
+          volumes:
+            - ./etc-pihole:/etc/pihole
+            - ./etc-dnsmasq.d:/etc/dnsmasq.d
+          cap_add:
+            - NET_ADMIN
+          healthcheck:
+            test: ["CMD", "dig", "+short", "+norecurse", "+retry=0", "@127.0.0.1", "pi.hole"]
+            interval: 30s
+            timeout: 10s
+            retries: 3
+            start_period: 20s
+  notify: Restart Pi-hole
+
+# ── Systemd service ───────────────────────────────────────────────────────────
+- name: Create Pi-hole systemd service
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/lab-pihole.service
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=Lab Pi-hole DNS Server
+      Requires=docker.service
+      After=docker.service
+      StartLimitIntervalSec=0
+
+      [Service]
+      Type=forking
+      WorkingDirectory=/opt/pihole
+      ExecStart=/usr/bin/docker compose up -d
+      ExecStop=/usr/bin/docker compose down
+      RemainAfterExit=yes
+      Restart=on-failure
+      RestartSec=10
+
+      [Install]
+      WantedBy=multi-user.target
+
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Enable and start Pi-hole
+  ansible.builtin.systemd:
+    name: lab-pihole
+    state: started
+    enabled: true
+
+# ── Health check ──────────────────────────────────────────────────────────────
+- name: Wait for Pi-hole web UI to be ready
+  ansible.builtin.uri:
+    url: "http://{{ ansible_host }}:{{ pihole_web_port }}/admin/"
+    method: GET
+    status_code: 200
+  register: pihole_health
+  until: pihole_health.status == 200
+  retries: 18
+  delay: 10
+
+# ── Configure DNS clients on all lab hosts ────────────────────────────────────
+# Tell NetworkManager to stop managing resolv.conf, then write it statically.
+# This survives reboots and DHCP renewals.
+- name: Stop NetworkManager from overwriting resolv.conf
+  ansible.builtin.copy:
+    dest: /etc/NetworkManager/conf.d/99-dns-none.conf
+    mode: '0644'
+    content: |
+      [main]
+      dns=none
+  delegate_to: "{{ item }}"
+  loop: "{{ groups['all'] }}"
+
+- name: Write resolv.conf pointing to Pi-hole on all lab hosts
+  ansible.builtin.copy:
+    dest: /etc/resolv.conf
+    mode: '0644'
+    content: |
+      # Managed by Ansible - points to lab Pi-hole
+      nameserver {{ private_registry_host }}
+      nameserver 1.1.1.1
+      search lab
+  delegate_to: "{{ item }}"
+  loop: "{{ groups['all'] }}"
+
+# ── Summary ───────────────────────────────────────────────────────────────────
+- name: Display Pi-hole access information
+  ansible.builtin.debug:
+    msg:
+      - "================================================================"
+      - "  Pi-hole DNS is READY!"
+      - "================================================================"
+      - "  Web UI:   http://{{ ansible_host }}:{{ pihole_web_port }}/admin"
+      - "  Password: {{ pihole_web_password }}"
+      - "  DNS:      {{ ansible_host }}:53"
+      - ""
+      - "  All lab VMs now resolve *.lab via Pi-hole."
+      - ""
+      - "  To use Pi-hole from Windows/WSL, set your DNS to:"
+      - "    {{ ansible_host }}"
+      - "================================================================"

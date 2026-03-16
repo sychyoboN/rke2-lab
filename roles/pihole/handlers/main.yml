@@ -1,0 +1,4 @@
+---
+- name: Restart Pi-hole
+  ansible.builtin.command: docker restart lab-pihole
+  changed_when: true

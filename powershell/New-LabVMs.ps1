@@ -3,37 +3,46 @@
 
 <#
 .SYNOPSIS
-    Provisions two Rocky Linux 9 VMs on Hyper-V for a dev lab.
+    Provisions two Rocky Linux 10 VMs on Hyper-V for a dev lab.
     VM1: DevTools + Private Docker Registry
     VM2: Single-node RKE2 Kubernetes + Rancher
 
 .NOTES
     Pre-requisites:
     - Hyper-V enabled on Windows host
-    - Rocky Linux 9 ISO downloaded (set $ISOPath below)
+    - Rocky Linux 10 ISO downloaded (set $ISOPath below)
     - Run from an elevated PowerShell session
 #>
 
 [CmdletBinding()]
 param(
     [string]$ISOPath        = "C:\ISOs\Rocky-10.1-x86_64-minimal.iso",
-    [string]$VMStoragePath  = "A:\VMs",
+    [string]$VMStoragePath  = "", # User decides where they want to store VM HDs
     [string]$SwitchName     = "LabSwitch",
     [string]$NATNetwork     = "192.168.100.0/24",
     [string]$GatewayIP      = "192.168.100.1",
     [string]$DevtoolsIP     = "192.168.100.10",
     [string]$K8sIP          = "192.168.100.20",
     [string]$DNS            = "8.8.8.8",
-    [switch]$SkipVMCreation,  # Set this if VMs exist, jump straight to IP display
+    [switch]$SkipVMCreation, # Set this if VMs exist, jump straight to IP display
     [string]$DefaultSwitchName = "Default Switch",
     [string]$Timezone          = "Australia/Sydney",
-    [SecureString]$AnsiblePassword                     # prompted if not supplied
+    [SecureString]$AnsiblePassword # prompted if not supplied
 )
 
 if (-not $AnsiblePassword) {
     $AnsiblePassword = Read-Host "Ansible user password" -AsSecureString
 }
 $ansiblePwPlain = [System.Net.NetworkCredential]::new('', $AnsiblePassword).Password
+
+if (-not $VMStoragePath) {
+    Write-Host "`nAvailable drives:" -ForegroundColor Cyan
+    Get-PSDrive -PSProvider FileSystem | Where-Object { $null -ne $_.Used } |
+        Sort-Object Root |
+        ForEach-Object { Write-Host ("  {0,-6} {1,8:N1} GB free" -f $_.Root, ($_.Free / 1GB)) }
+    $VMStoragePath = Read-Host "`nVM storage path (press Enter for C:\VMs)"
+    if (-not $VMStoragePath) { $VMStoragePath = "C:\VMs" }
+}
 
 if ($NATNetwork -notmatch '^\d{1,3}(\.\d{1,3}){3}/\d{1,2}$') {
     throw "NATNetwork must be CIDR like 192.168.100.0/24 (got '$NATNetwork')"
@@ -279,7 +288,7 @@ Write-Step "Updating Windows hosts file"
 $hostsFile  = "$env:SystemRoot\System32\drivers\etc\hosts"
 $labEntries = @(
     "$DevtoolsIP`tlab-devtools"
-    "$K8sIP`tlab-k8s`trancher.lab.local"
+    "$K8sIP`tlab-k8s"
 )
 
 $hostsContent = [System.IO.File]::ReadAllText($hostsFile)
