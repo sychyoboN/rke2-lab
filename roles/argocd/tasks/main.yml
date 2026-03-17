@@ -49,6 +49,49 @@
     rollout status deployment/argocd-server -n argocd --timeout=300s
   changed_when: false
 
+# ── Local Accounts / RBAC ─────────────────────────────────────────────────────
+- name: Write ArgoCD local account manifest
+  ansible.builtin.copy:
+    dest: /tmp/argocd-accounts.yaml
+    mode: '0644'
+    content: |
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: argocd-cm
+        namespace: argocd
+      data:
+        accounts.homepage: apiKey, login
+        accounts.homepage.enabled: "true"
+      ---
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: argocd-rbac-cm
+        namespace: argocd
+      data:
+        policy.csv: |
+          g, homepage, role:readonly
+        policy.default: role:readonly
+
+- name: Apply ArgoCD local account manifest
+  ansible.builtin.command: >
+    {{ kubectl }} --kubeconfig {{ kubeconfig }}
+    apply -f /tmp/argocd-accounts.yaml
+  changed_when: true
+
+- name: Restart ArgoCD server after account config change
+  ansible.builtin.command: >
+    {{ kubectl }} --kubeconfig {{ kubeconfig }}
+    rollout restart deployment/argocd-server -n argocd
+  changed_when: true
+
+- name: Wait for ArgoCD server after account config change
+  ansible.builtin.command: >
+    {{ kubectl }} --kubeconfig {{ kubeconfig }}
+    rollout status deployment/argocd-server -n argocd --timeout=300s
+  changed_when: false
+
 # ── Ingress ───────────────────────────────────────────────────────────────────
 - name: Write ArgoCD Ingress manifest
   ansible.builtin.copy:
@@ -115,4 +158,9 @@
       - ""
       - "  CLI login:"
       - "    argocd login {{ argocd_hostname }} --username admin --insecure"
+      - ""
+      - "  Homepage widget account:"
+      - "    username: homepage"
+      - "    capabilities: login, apiKey"
+      - "    role: readonly"
       - "================================================================"

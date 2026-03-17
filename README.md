@@ -149,6 +149,29 @@ kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml \
 
 > Change the password after first login via **User Info → Update Password**, then delete the `argocd-initial-admin-secret` secret.
 
+### ArgoCD local widget user
+
+The Ansible role also creates a local ArgoCD user named `homepage` with `login` and `apiKey` enabled and maps it to the built-in readonly role.
+
+Set a password for that user after deployment:
+
+```bash
+argocd login argocd.lab --username admin --insecure
+argocd account update-password \
+  --account homepage \
+  --current-password "<homepage user's current password if already set>" \
+  --new-password "<new homepage password>"
+```
+
+Generate a token for Homepage after the password is set:
+
+```bash
+argocd login argocd.lab --username homepage --insecure
+argocd account generate-token --account homepage
+```
+
+Use that token in your Homepage ArgoCD widget configuration.
+
 ### Step 7 — Access Pi-hole
 
 Open: **http://192.168.100.10:8080/admin**
