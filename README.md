@@ -47,7 +47,7 @@ Automated build of two Rocky Linux 10 VMs on Hyper-V using **PowerShell** (VM pr
 │   └── all.yml                 # Versions, IPs, passwords
 └── roles/
     ├── common/                 # Baseline: SELinux, sysctl, packages, /etc/hosts
-    ├── devtools/               # Git, Docker, Helm, kubectl, k9s
+    ├── devtools/               # Git, Docker, Helm, kubectl, k9s, argocd, kubeseal
     ├── registry/               # Private Docker registry (port 5000)
     ├── pihole/                 # Pi-hole DNS server (port 53 / web UI 8080)
     ├── rke2/                   # RKE2 server install + kubeconfig
@@ -259,6 +259,8 @@ All versions and IPs are in `group_vars/all.yml`:
 | `helm_version` | v4.1.3 | Helm version |
 | `kubectl_version` | v1.34.5 | kubectl version |
 | `k9s_version` | v0.50.18 | k9s version on `lab-devtools` |
+| `argocd_cli_version` | v2.14.20 | ArgoCD CLI version on `lab-devtools` |
+| `kubeseal_version` | 0.28.0 | kubeseal version on `lab-devtools` |
 | `rancher_hostname` | rancher.lab | Rancher ingress hostname |
 | `rancher_bootstrap_password` | Admin1234! | **Change this!** |
 | `argocd_chart_version` | 7.7.3 | ArgoCD Helm chart version |

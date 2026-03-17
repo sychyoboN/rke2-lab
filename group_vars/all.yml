@@ -16,6 +16,8 @@ rancher_version: "2.13.3"
 cert_manager_version: "v1.19.4"
 helm_version: "v4.1.3"
 k9s_version: "v0.50.18"
+argocd_cli_version: "v2.14.20"
+kubeseal_version: "0.28.0"
 
 # Rancher hostname (add to /etc/hosts or real DNS)
 rancher_hostname: "rancher.lab"

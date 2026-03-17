@@ -1,5 +1,5 @@
 ---
-# DevTools role: Git, Docker CE, Docker Compose, Helm, kubectl, k9s
+# DevTools role: Git, Docker CE, Docker Compose, Helm, kubectl, k9s, ArgoCD CLI, kubeseal
 
 # ── Docker CE ────────────────────────────────────────────────────────────────
 - name: Add Docker CE repository
@@ -119,6 +119,41 @@
     dest: /usr/bin/k9s
     state: link
 
+# ── ArgoCD CLI ───────────────────────────────────────────────────────────────
+- name: Install ArgoCD CLI
+  ansible.builtin.get_url:
+    url: "https://github.com/argoproj/argo-cd/releases/download/{{ argocd_cli_version }}/argocd-linux-amd64"
+    dest: /usr/local/bin/argocd
+    mode: '0755'
+
+- name: Symlink argocd into standard path for ansible
+  ansible.builtin.file:
+    src: /usr/local/bin/argocd
+    dest: /usr/bin/argocd
+    state: link
+
+- name: Enable argocd bash completion
+  ansible.builtin.shell: argocd completion bash > /etc/bash_completion.d/argocd
+  args:
+    creates: /etc/bash_completion.d/argocd
+
+# ── kubeseal ─────────────────────────────────────────────────────────────────
+- name: Install kubeseal
+  ansible.builtin.unarchive:
+    src: "https://github.com/bitnami-labs/sealed-secrets/releases/download/v{{ kubeseal_version }}/kubeseal-{{ kubeseal_version }}-linux-amd64.tar.gz"
+    dest: /usr/local/bin
+    remote_src: true
+    extra_opts:
+      - "kubeseal"
+    creates: /usr/local/bin/kubeseal
+    mode: '0755'
+
+- name: Symlink kubeseal into standard path for ansible
+  ansible.builtin.file:
+    src: /usr/local/bin/kubeseal
+    dest: /usr/bin/kubeseal
+    state: link
+
 # ── Git config ───────────────────────────────────────────────────────────────
 - name: Ensure git is latest
   ansible.builtin.dnf:
@@ -143,6 +178,8 @@
     kubectl version --client --short 2>/dev/null || kubectl version --client
     git --version
     k9s version
+    argocd version --client --short
+    kubeseal --version
   register: tool_versions
   changed_when: false
 
