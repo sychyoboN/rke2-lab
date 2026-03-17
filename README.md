@@ -13,10 +13,10 @@ Automated build of two Rocky Linux 10 VMs on Hyper-V using **PowerShell** (VM pr
 │  │  • Git                   │   │  • RKE2 (single-node)     │   │
 │  │  • Docker CE             │   │  • Single-node control    │   │
 │  │  • Docker Compose        │   │    plane + worker         │   │
-│  │  • Helm                  │   │  • Rancher Manager 2.9    │   │
+│  │  • Helm                  │   │  • Rancher Manager 2.13   │   │
 │  │  • kubectl               │   │  • cert-manager           │   │
-│  │  • k9s                   │   │                           │   │
-│  │  • Docker Registry :5000 │   │  • ArgoCD                 │   │
+│  │  • k9s                   │   │  • ArgoCD                 │   │
+│  │  • Docker Registry :5000 │   │                           │   │
 │  │  • Pi-hole DNS :53/:8080 │   │                           │   │
 │  └──────────┬───────────────┘   └──────────────┬────────────┘   │
 │             └──────────────────────────────────┘                │
