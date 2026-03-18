@@ -202,6 +202,7 @@ Pi-hole resolves these `lab` names out of the box:
 | `lab-k8s` / `lab-k8s.lab` | 192.168.100.20 |
 | `rancher.lab` | 192.168.100.20 |
 | `argocd.lab` | 192.168.100.20 |
+| `postgres.apps.lab` | 192.168.100.20 |
 
 > Add new Pi-hole DNS names in `group_vars/all.yml` under `pihole_dns_records`, then re-run `--tags pihole`.
 >

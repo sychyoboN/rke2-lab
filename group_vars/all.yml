@@ -40,6 +40,7 @@ pihole_dns_records:
   lab-k8s.lab:        "{{ k8s_host }}"
   rancher.lab:        "{{ k8s_host }}"
   argocd.lab:         "{{ k8s_host }}"
+  postgres.apps.lab:  "{{ k8s_host }}"
 
 # Tools versions
 kubectl_version: "v1.34.5"
